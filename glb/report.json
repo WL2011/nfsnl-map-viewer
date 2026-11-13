@@ -1,0 +1,151 @@
+[
+ {
+  "scene": "devilsnight_lightsout_region03_thesquare.scene_static.sba",
+  "nodes": 439,
+  "verts": 296609,
+  "tris": 158109,
+  "textures": 51,
+  "missing": [],
+  "material_file": "final_region03_thesquare.lit_scene_night.scene_static.lightmaps.sba",
+  "mb": 30.550276
+ },
+ {
+  "scene": "final_region01_cornerstone.scene_static.sba",
+  "nodes": 498,
+  "verts": 446781,
+  "tris": 230387,
+  "textures": 51,
+  "missing": [],
+  "material_file": "final_region01_cornerstone.lit_scene_night.scene_static.lightmaps.sba",
+  "mb": 37.089564
+ },
+ {
+  "scene": "final_region02_hopebridge.scene_static.sba",
+  "nodes": 652,
+  "verts": 301112,
+  "tris": 168642,
+  "textures": 52,
+  "missing": [],
+  "material_file": "final_region02_hopebridge.lit_scene_twilight.scene_static.lightmaps.sba",
+  "mb": 32.556148
+ },
+ {
+  "scene": "final_region03_thesquare.scene_static.sba",
+  "nodes": 439,
+  "verts": 296609,
+  "tris": 158109,
+  "textures": 51,
+  "missing": [],
+  "material_file": "final_region03_thesquare.lit_scene_night.scene_static.lightmaps.sba",
+  "mb": 30.550276
+ },
+ {
+  "scene": "final_region04_eastside.scene_static.sba",
+  "nodes": 1158,
+  "verts": 821064,
+  "tris": 469335,
+  "textures": 56,
+  "missing": [],
+  "material_file": "final_region04_eastside.lit_scene_day.scene_static.lightmaps.sba",
+  "mb": 58.642116
+ },
+ {
+  "scene": "final_region06_beachfront.scene_static.sba",
+  "nodes": 596,
+  "verts": 279925,
+  "tris": 171520,
+  "textures": 43,
+  "missing": [],
+  "material_file": "final_region06_beachfront.lit_scene_day.scene_static.lightmaps.sba",
+  "mb": 30.451892
+ },
+ {
+  "scene": "final_region07_rugged_coast.scene_static.sba",
+  "nodes": 557,
+  "verts": 209899,
+  "tris": 159079,
+  "textures": 20,
+  "missing": [],
+  "material_file": "final_region07_rugged_coast.lit_scene_day.scene_static.lightmaps.sba",
+  "mb": 23.57958
+ },
+ {
+  "scene": "final_region08_mountain.scene_static.sba",
+  "nodes": 526,
+  "verts": 425344,
+  "tris": 283718,
+  "textures": 35,
+  "missing": [],
+  "material_file": "final_region08_mountain.lit_scene_day.scene_static.lightmaps.sba",
+  "mb": 42.772752
+ },
+ {
+  "scene": "lunar_2022_mountains_region_08_dawn.layer.scene_static.sba",
+  "skipped": "no static instances"
+ },
+ {
+  "scene": "lunar_2022_mountains_region_08_dawn.variant.scene_static.sba",
+  "nodes": 513,
+  "verts": 414297,
+  "tris": 273134,
+  "textures": 33,
+  "missing": [],
+  "material_file": "final_region08_mountain.lit_scene_day.scene_static.lightmaps.sba",
+  "mb": 41.596184
+ },
+ {
+  "scene": "region09_desert.scene_static.sba",
+  "nodes": 1561,
+  "verts": 750317,
+  "tris": 508538,
+  "textures": 63,
+  "missing": [],
+  "material_file": "region09_desert.lit_scene_day.scene_static.lightmaps.sba",
+  "mb": 76.602308
+ },
+ {
+  "scene": "region10_rural.scene_static.sba",
+  "nodes": 774,
+  "verts": 295458,
+  "tris": 175422,
+  "textures": 21,
+  "missing": [],
+  "material_file": "region10_rural.lit_scene_dawn.scene_static.lightmaps.sba",
+  "mb": 33.360072
+ },
+ {
+  "scene": "region11_airport.scene_static.sba",
+  "nodes": 712,
+  "verts": 206812,
+  "tris": 136370,
+  "textures": 20,
+  "missing": [],
+  "material_file": "region11_airport.lit_scene_day.scene_static.lightmaps.sba",
+  "mb": 21.20718
+ },
+ {
+  "scene": "region12_speedway.scene_static.sba",
+  "nodes": 315,
+  "verts": 105945,
+  "tris": 74084,
+  "textures": 0,
+  "missing": [
+   "texture_curb_strip.sba",
+   "texture_roadBlank.sba",
+   "texture_roadFootPath.sba",
+   "texture_trackcreator_lines_00.sba"
+  ],
+  "material_file": "region12_speedway.lit_scene_day.scene_static.lightmaps.sba",
+  "mb": 5.038708
+ },
+ {
+  "scene": "studio_vehicles_ingame_preview.scene_static.sba",
+  "nodes": 2,
+  "verts": 4887,
+  "tris": 2654,
+  "textures": 2,
+  "missing": [],
+  "material_file": "studio_vehicles_ingame_preview.lit_scene.scene_static.lightmaps.sba",
+  "mb": 0.221236
+ }
+]
