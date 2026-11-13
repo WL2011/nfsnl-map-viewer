@@ -479,17 +479,48 @@ function prep(T) {
   });
   const arc = new Float64Array(n);
   for (let j = 1; j < n; j++) arc[j] = arc[j - 1] + Math.hypot(sm[j][0] - sm[j - 1][0], sm[j][1] - sm[j - 1][1], sm[j][2] - sm[j - 1][2]);
-  const dlLen = arc[n - 1], m = Math.max(2, Math.ceil(dlLen / DL_STEP) + 1);
-  const dlP = new Float32Array(m * 3), dlL0 = new Float64Array(m);
+  // 1) uniform resample of the polyline, 2) Gaussian smoothing (sigma ~6 m) so curvature is continuous (a polyline turns in
+  // little steps at every vertex, which shows as jerks in the car heading and the camera in corners), 3) resample again by
+  // arc length so the car still moves at exactly constant speed along the smoothed line
+  const r1 = resampleLine(sm.map(q => q[0]), sm.map(q => q[1]), sm.map(q => q[2]), Array.from(D), arc);
+  const g = gaussSmooth(r1, 4, 12);
+  const g2 = [];
+  for (let i = 0; i < g.n; i++) g2.push(i ? g2[i - 1] + Math.hypot(g.x[i] - g.x[i - 1], g.y[i] - g.y[i - 1], g.z[i] - g.z[i - 1]) : 0);
+  const r2 = resampleLine(g.x, g.y, g.z, g.l0, g2);
+  const dlP = new Float32Array(r2.n * 3);
+  for (let i = 0; i < r2.n; i++) { dlP[i * 3] = r2.x[i]; dlP[i * 3 + 1] = r2.y[i]; dlP[i * 3 + 2] = r2.z[i]; }
+  return T._p = {L, D, n, cx, cz, base, ymin, ymax, R, theta, left, right, width, ribLane, laneRib, grade, up, down,
+                 dlP, dlL0: Float64Array.from(r2.l0), dlLen: r2.len, len: D[n - 1]};
+}
+// resample a polyline (x, y, z, carried value l0, cumulative arc length) every DL_STEP metres
+function resampleLine(x, y, z, l0, arc) {
+  const n = x.length, len = arc[n - 1], m = Math.max(2, Math.ceil(len / DL_STEP) + 1);
+  const o = {x: new Float64Array(m), y: new Float64Array(m), z: new Float64Array(m), l0: new Float64Array(m), n: m, len};
   for (let i = 0, j = 1; i < m; i++) {
-    const s = Math.min(dlLen, i * DL_STEP);
+    const s = Math.min(len, i * DL_STEP);
     while (j < n - 1 && arc[j] < s) j++;
     const t = arc[j] > arc[j - 1] ? (s - arc[j - 1]) / (arc[j] - arc[j - 1]) : 0;
-    for (let c = 0; c < 3; c++) dlP[i * 3 + c] = sm[j - 1][c] + (sm[j][c] - sm[j - 1][c]) * t;
-    dlL0[i] = D[j - 1] + (D[j] - D[j - 1]) * t;
+    o.x[i] = x[j - 1] + (x[j] - x[j - 1]) * t; o.y[i] = y[j - 1] + (y[j] - y[j - 1]) * t;
+    o.z[i] = z[j - 1] + (z[j] - z[j - 1]) * t; o.l0[i] = l0[j - 1] + (l0[j] - l0[j - 1]) * t;
   }
-  return T._p = {L, D, n, cx, cz, base, ymin, ymax, R, theta, left, right, width, ribLane, laneRib, grade, up, down,
-                 dlP, dlL0, dlLen, len: D[n - 1]};
+  return o;
+}
+// Gaussian smoothing over uniformly spaced samples (sigma and radius in samples); ends use the truncated, renormalised kernel
+function gaussSmooth(r, sigma, rad) {
+  const w = []; for (let k = -rad; k <= rad; k++) w.push(Math.exp(-k * k / (2 * sigma * sigma)));
+  const o = {x: new Float64Array(r.n), y: new Float64Array(r.n), z: new Float64Array(r.n), l0: r.l0, n: r.n};
+  for (let i = 0; i < r.n; i++) {
+    let sx = 0, sy = 0, sz = 0, sw = 0;
+    for (let k = -rad; k <= rad; k++) {
+      const j = i + k; if (j < 0 || j >= r.n) continue;
+      const wk = w[k + rad]; sx += r.x[j] * wk; sy += r.y[j] * wk; sz += r.z[j] * wk; sw += wk;
+    }
+    o.x[i] = sx / sw; o.y[i] = sy / sw; o.z[i] = sz / sw;
+  }
+  // keep the exact end points (start / finish lines stay where they are)
+  o.x[0] = r.x[0]; o.y[0] = r.y[0]; o.z[0] = r.z[0];
+  o.x[r.n - 1] = r.x[r.n - 1]; o.y[r.n - 1] = r.y[r.n - 1]; o.z[r.n - 1] = r.z[r.n - 1];
+  return o;
 }
 const DL_STEP = 1.5;
 // lane-0 distance -> drive-line distance (and back)
