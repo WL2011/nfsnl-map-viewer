@@ -116,7 +116,7 @@ body.loading #c{opacity:.4}
 #msg div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;box-shadow:var(--shadow);max-width:420px}
 
 /* race camera HUD */
-.hud{left:50%;bottom:14px;transform:translateX(-50%);width:min(560px,calc(100% - 28px));padding:10px 12px 9px;z-index:6}
+.hud{left:50%;bottom:14px;transform:translateX(-50%);width:min(620px,calc(100% - 28px));padding:10px 12px 9px;z-index:6}
 .hud-row{display:flex;align-items:center;gap:8px}
 .hud-row .tb{width:32px}
 .hud .unit{color:var(--muted);font-size:11px;margin-left:-4px}
@@ -264,7 +264,9 @@ body.driving .colorkey,body.driving #layersPop{display:none}
             <button data-speed="120" aria-pressed="false">120</button>
             <button data-speed="200" aria-pressed="true">200</button>
             <button data-speed="300" aria-pressed="false">300</button>
+            <button data-speed="400" aria-pressed="false">400</button>
           </div><span class="unit">km/h</span>
+          <button class="tb" id="dCar" aria-pressed="false" title="隐藏小车（H）"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3 11.5V9.6l1.6-3.1h8.8L15 9.6v1.9zM5.5 11.5v1.4M12.5 11.5v1.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/><path id="dCarSlash" d="M2.5 2.5l13 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" hidden/></svg></button>
           <span class="spacer"></span>
           <button class="tb" id="dExit" title="退出比赛镜头（Esc）"><svg viewBox="0 0 18 18"><path d="M4 4l10 10M14 4L4 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
         </div>
@@ -973,7 +975,7 @@ function driveStep(dt) {
     eye = driveAt(p, s - dir * 10.5, _c); eye.y = Math.max(eye.y, here.y) + 3.4;
     look = driveAt(p, s + dir * 16, _d); look.y += 1.1;
   }
-  car.visible = DRV.view !== 'cockpit';
+  car.visible = DRV.view !== 'cockpit' && !DRV.hideCar;
   DRV.camPos.copy(eye); DRV.camLook.copy(look); DRV.snap = false;
   persp.position.copy(eye); persp.up.set(0, 1, 0); persp.lookAt(look);
   // HUD + profile cursor: DOM work at ~10 Hz so it never steals frame time
@@ -1003,6 +1005,18 @@ document.querySelectorAll('[data-dview]').forEach(b => b.addEventListener('click
   persp.fov = DRV.view === 'cockpit' ? 68 : 60; persp.updateProjectionMatrix();
   document.querySelectorAll('[data-dview]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
 }));
+// hide / show the little car (remembered per browser)
+try { DRV.hideCar = localStorage.getItem('nfsnl.hideCar') === '1'; } catch (e) { DRV.hideCar = false; }
+function setHideCar(on) {
+  DRV.hideCar = on;
+  $('#dCar').setAttribute('aria-pressed', String(on));
+  $('#dCar').title = on ? '显示小车（H）' : '隐藏小车（H）';
+  $('#dCarSlash').hidden = !on;
+  if (DRV.active) car.visible = DRV.view !== 'cockpit' && !on;
+  try { localStorage.setItem('nfsnl.hideCar', on ? '1' : '0'); } catch (e) {}
+}
+setHideCar(DRV.hideCar);
+$('#dCar').addEventListener('click', () => setHideCar(!DRV.hideCar));
 document.querySelectorAll('[data-speed]').forEach(b => b.addEventListener('click', () => {
   DRV.kmh = +b.dataset.speed;
   document.querySelectorAll('[data-speed]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
@@ -1012,6 +1026,7 @@ addEventListener('keydown', e => {
   if (!DRV.active || e.target.matches('input[type=search],input[type=text]')) return;
   if (e.key === 'Escape') { e.preventDefault(); stopDrive(); }
   else if (e.key === ' ') { e.preventDefault(); $('#dPlay').click(); }
+  else if (e.key === 'h' || e.key === 'H') { e.preventDefault(); setHideCar(!DRV.hideCar); }
   else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
     e.preventDefault(); const st = (DRV.s1 - DRV.s0) * 0.03 * (e.key === 'ArrowRight' ? 1 : -1);
     const lo = Math.min(DRV.s0, DRV.s1), hi = Math.max(DRV.s0, DRV.s1);
