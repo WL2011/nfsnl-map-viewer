@@ -35,6 +35,74 @@ final class Locator {
     private boolean departing;
     private float movedSinceStart;
     private long teleportT, fastSince;
+    private float lookX, lookZ;              // camera view direction (world xz, unit); the view axis is -row2 of its matrix
+    private boolean gridChecked, raceFromGrid;
+    private long holdUntil;                  // keep the map up while waiting on the grid
+    // player / opponent car (from the root reader once it has learned them); preferred over the camera
+    private float carX, carY, carZ, carHx, carHz;
+    private long carT;
+    boolean usingCar;
+    float oppX, oppZ, oppHx, oppHz;
+    private long oppT;
+
+    // ---- event selected in the game's menu (TrackId read from memory)
+    private TrackData.MapInfo idMap;
+    private TrackData.Track idTrack;
+    private TrackData.Race idRace;
+    String trackId = "";
+
+    /** e.g. region07_track01_race01_forward_day -> map 07, track 01, race "race01_forward" (time of day ignored) */
+    void onTrackId(String id) {
+        if (id.equals(trackId)) return;
+        trackId = id;
+        idMap = null; idTrack = null; idRace = null;
+        String[] p = id.toLowerCase().split("_");
+        if (p.length < 4 || !p[0].startsWith("region") || !p[1].startsWith("track")) return;
+        int region, tnum;
+        try { region = Integer.parseInt(p[0].substring(6)); tnum = Integer.parseInt(p[1].substring(5)); }
+        catch (NumberFormatException e) { return; }
+        StringBuilder full = new StringBuilder(), noTod = new StringBuilder();
+        for (int i = 2; i < p.length; i++) { full.append(p[i]); if (i < p.length - 1) noTod.append(p[i]); }
+        for (TrackData.MapInfo m : data.maps) {
+            if (m.region != region) continue;
+            for (TrackData.Track t : m.tracks) {
+                int tn = -1;
+                try { tn = Integer.parseInt(t.name.replaceAll("[^0-9]", "")); } catch (NumberFormatException ignored) {}
+                for (TrackData.Race r : t.races) {
+                    String k = r.id.toLowerCase().replace("_", "");
+                    if (!k.equals(full.toString()) && !k.equals(noTod.toString())) continue;
+                    if (idRace == null || tn == tnum) { idMap = m; idTrack = t; idRace = r; }
+                }
+            }
+        }
+    }
+
+    /** Use the menu's event as soon as we are on its map near its start (cross-checked with the position). */
+    private boolean applyTrackId(long t) {
+        if (idRace == null || race == idRace) return false;
+        float[] p = new float[2];
+        idTrack.at(idRace.s0, p);
+        float ds = (float) Math.hypot(x - p[0], z - p[1]);
+        if (ds > 600 && nearestDist(idTrack, x, z, false) > 80) return false;
+        map = idMap; track = idTrack; race = idRace; raceGuessed = false; raceFromGrid = true;
+        idx = -1; offTrackCount = 0; java.util.Arrays.fill(hits, 0);
+        int dir = idRace.s1 >= idRace.s0 ? 1 : -1;
+        float[] q = new float[2];
+        idTrack.at(idRace.s0 + 6 * dir, q);
+        float tx = q[0] - p[0], tz = q[1] - p[1], n = (float) Math.hypot(tx, tz);
+        if (n > 1e-3f) { hx = tx / n; hz = tz / n; }
+        holdUntil = t + 30000;
+        return true;
+    }
+
+    void onCar(long t, float x, float y, float z, float hx, float hz) { carX = x; carY = y; carZ = z; carHx = hx; carHz = hz; carT = t; }
+
+    void onOpp(long t, float x, float z, float hx, float hz) { oppX = x; oppZ = z; oppHx = hx; oppHz = hz; oppT = t; }
+
+    /** Opponent position is fresh and on the same map as us. */
+    boolean oppVisible(long now) {
+        return now - oppT < 500 && track != null && Math.abs(oppX - x) < 3000 && Math.abs(oppZ - z) < 3000;
+    }
 
     Locator(TrackData d) {
         data = d;
@@ -51,13 +119,22 @@ final class Locator {
         live = false;
     }
 
-    void onPose(long t, float x, float y, float z) {
+    void onPose(long t, float x, float y, float z, float fx, float fz) {
+        usingCar = t - carT < 300;
+        if (usingCar) {                       // the car itself: exact position and nose direction
+            x = carX; y = carY; z = carZ;
+            lookX = carHx; lookZ = carHz;
+        } else {
+            float ln = (float) Math.sqrt(fx * fx + fz * fz);
+            if (ln > 0.2f) { lookX = -fx / ln; lookZ = -fz / ln; }
+        }
         this.x = x; this.y = y; this.z = z;
         if (havePrev) {
             float dt = Math.max(0.001f, (t - lastT) / 1000f);
             float dx = x - px, dz = z - pz, dist = (float) Math.sqrt(dx * dx + dz * dz);
             if (dist > 150) {                      // teleport (restart, replay camera, menu)
                 gridValid = false; departing = false; race = null; teleportT = t;
+                stillSince = 0; gridChecked = false; raceFromGrid = false; holdUntil = 0;
             } else {
                 float v = dist / dt;
                 speed += (v - speed) * 0.3f;
@@ -73,9 +150,15 @@ final class Locator {
         px = x; pz = z; lastT = t; havePrev = true;
 
         if (speed > 2) lastMoveT = t;
-        live = t - lastMoveT < 8000;
 
         trackStillness(t);
+        applyTrackId(t);
+        // camera settled behind the car on the grid: decide map + race right away from position and facing
+        if (speed < 1 && stillSince != 0 && t - stillSince > 600 && !gridChecked && !(race != null && race == idRace)) {
+            gridChecked = true;
+            gridDetect(t);
+        }
+        live = t - lastMoveT < 8000 || t < holdUntil;
         locateMap();
         if (track == null) { onTrack = false; status = map == null ? "识别地图中…" : status; return; }
         project();
@@ -173,6 +256,7 @@ final class Locator {
             if (stillSince == 0) stillSince = t;
             if (t - stillSince > 1200) { gridX = x; gridZ = z; gridValid = true; departing = false; }
         } else {
+            gridChecked = false;
             if (stillSince != 0 && gridValid && !departing) {
                 departing = true; movedSinceStart = 0; startX = gridX; startZ = gridZ;
             }
@@ -183,7 +267,8 @@ final class Locator {
     }
 
     private void raceLogic(long t) {
-        // pulled away from the grid: decide once we have a direction
+        // pulled away from the grid: decide once we have a direction (unless the grid already told us)
+        if (departing && raceFromGrid) departing = false;
         if (departing && movedSinceStart > 40) {
             departing = false; gridValid = false;
             int dir = directionSign();
@@ -220,8 +305,47 @@ final class Locator {
         // well past the finish: race over
         if (race != null) {
             int rd = race.s1 >= race.s0 ? 1 : -1;
-            if ((d - race.s1) * rd > 400) race = null;
+            if ((d - race.s1) * rd > 400) { race = null; raceFromGrid = false; }
         }
+    }
+
+    /**
+     * Standing still: is the camera just behind some race's start line (on the road, within a few car lengths)
+     * and looking the way that race runs? Pick the closest such race on any map.
+     */
+    private boolean gridDetect(long t) {
+        if (lookX == 0 && lookZ == 0) return false;
+        float[] p = new float[2], q = new float[2];
+        TrackData.Race best = null; TrackData.Track bestT = null; TrackData.MapInfo bestM = null;
+        float bestCost = Float.MAX_VALUE, btx = 0, btz = 0;
+        for (TrackData.MapInfo m : data.maps) {
+            for (TrackData.Track tr : m.tracks) {
+                if (x < tr.minX - 80 || x > tr.maxX + 80 || z < tr.minZ - 80 || z > tr.maxZ + 80) continue;
+                for (TrackData.Race r : tr.races) {
+                    int dir = r.s1 >= r.s0 ? 1 : -1;
+                    tr.at(r.s0, p);
+                    float ex = x - p[0], ez = z - p[1];
+                    if (ex * ex + ez * ez > 60 * 60) continue;
+                    tr.at(r.s0 + 6 * dir, q);
+                    float tx = q[0] - p[0], tz = q[1] - p[1], n = (float) Math.sqrt(tx * tx + tz * tz);
+                    if (n < 1e-3f) continue;
+                    tx /= n; tz /= n;
+                    float along = ex * tx + ez * tz, lateral = Math.abs(ex * tz - ez * tx);
+                    // the camera sits ~6-10 m behind the car; the car itself stands at the start line
+                    float expect = usingCar ? 0 : -6;
+                    if (along < expect - 30 || along > expect + 18 || lateral > 22) continue;
+                    if (lookX * tx + lookZ * tz < 0.3f) continue;          // facing the wrong way: the other direction's race
+                    float cost = Math.abs(along - expect) + lateral + (r.label.indexOf(' ') >= 0 ? 3 : 0);   // prefer the plain race over its long/short variants
+                    if (cost < bestCost) { bestCost = cost; best = r; bestT = tr; bestM = m; btx = tx; btz = tz; }
+                }
+            }
+        }
+        if (best == null) return false;
+        map = bestM; track = bestT; race = best; raceGuessed = false; raceFromGrid = true;
+        idx = -1; offTrackCount = 0; java.util.Arrays.fill(hits, 0);
+        hx = btx; hz = btz;
+        holdUntil = t + 30000;
+        return true;
     }
 
     /** +1 if moving towards larger lane-0 distance on the current track. */

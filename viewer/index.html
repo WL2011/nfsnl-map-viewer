@@ -54,6 +54,7 @@ button,input,select{font:inherit;color:inherit}
 #maps{flex:1;overflow:auto;padding:0 8px 12px}
 .grp{margin-top:8px}
 .grp-h{display:flex;align-items:center;gap:8px;padding:6px 6px 4px;color:var(--ink);font-weight:600}
+#maps .grp-h{margin-top:10px;padding-top:12px;border-top:1px solid var(--line)}
 .grp-h .n{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:0 5px}
 .item{display:flex;width:100%;align-items:center;gap:10px;border:0;background:transparent;text-align:left;padding:8px 8px;border-radius:8px;cursor:pointer;color:var(--ink);margin-top:2px}
 .item:hover{background:var(--panel-2)}
@@ -238,7 +239,8 @@ body.driving .colorkey,body.driving #layersPop{display:none}
         <label><input type="checkbox" id="lyLanes">比赛车道线</label>
         <label><input type="checkbox" id="lyTraffic">交通车道</label>
         <label><input type="checkbox" id="lyCps" checked>检查点</label>
-        <div class="note">原赛道模式只显示游戏场景和起终点图钉。</div>
+        <label><input type="checkbox" id="lyFx" checked>限定地图特效</label>
+        <div class="note">原赛道模式只显示游戏场景和起终点图钉；限定地图另有游戏里的粒子特效（蝙蝠、火光、闪电、彩纸等）。</div>
       </div>
       <div class="float colorkey">
         <div id="keySchem">
@@ -304,6 +306,8 @@ window.NFSNL = {index: null, maps: {}, waiters: {}, sceneIndex: null, scenes: {}
   setIndex(i) { this.index = i; },
   add(m) { this.maps[m.key] = m; (this.waiters[m.key] || []).forEach(f => f(m)); delete this.waiters[m.key]; },
   setScenes(l) { this.sceneIndex = l; },
+  fx: {}, fxWaiters: {},
+  addFx(k, d) { this.fx[k] = d; (this.fxWaiters[k] || []).forEach(f => f(d)); delete this.fxWaiters[k]; },
   addScene(stem, b64) { this.scenes[stem] = b64; (this.sceneWaiters[stem] || []).forEach(f => f(b64)); delete this.sceneWaiters[stem]; }};
 try { const t = localStorage.getItem('nfsnl-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 setTimeout(() => { if (!window.__boot) { const m = document.getElementById('msg'); m.style.display = 'flex';
@@ -695,8 +699,8 @@ function applyLayers() {
 }
 
 // ------------------------------------------------------------------ original track (game scene + baked lighting)
-const SKY = {day: '#a9c6df', sunset: '#e2b591', dawn: '#d8c5c3', twilight: '#5a648e', night: '#0c111d', overcast: '#b6bec6', storm: '#7b8590'};
-const LIT = {day: '白天', sunset: '黄昏', dawn: '清晨', twilight: '薄暮', night: '夜晚', overcast: '阴天', storm: '暴雨'};
+const SKY = {day: '#a9c6df', sunset: '#e2b591', dawn: '#d8c5c3', twilight: '#5a648e', night: '#0c111d', overcast: '#b6bec6', storm: '#7b8590', bloodmoon: '#2a1016'};
+const LIT = {day: '白天', sunset: '黄昏', dawn: '清晨', twilight: '薄暮', night: '夜晚', overcast: '阴天', storm: '暴雨', bloodmoon: '血月'};
 const sceneCache = {};
 function sceneEntry(m) {
   const L = NF.sceneIndex || [];
@@ -753,7 +757,7 @@ function applyBackground() {
     const b = document.createElement('b'); b.textContent = '原赛道'; k.appendChild(b);
     k.appendChild(document.createTextNode(` · ${LIT[e.lit] || e.lit}光照 · ${fmtInt(e.tris)} 个三角面`));
     k.appendChild(document.createElement('br'));
-    k.appendChild(document.createTextNode(`场景 ${e.stem}${e.stem !== S.map.key ? '（活动版沿用原版场景）' : ''}`));
+    k.appendChild(document.createTextNode(`场景 ${e.stem}${e.event ? `（${S.map.event} 限定版，比赛路线同原版）` : ''}`));
   }
   document.querySelectorAll('[data-exag]').forEach(b => b.setAttribute('aria-disabled', String(!!game)));
   if (DRV.active) gateBlend();
@@ -774,6 +778,236 @@ async function ensureGame() {
     showMsg('');
   }
   positionGame(); applyLayers(); placeMarkers();
+  if (G.gameEntry?.event) ensureFx(G.gameEntry.stem, G.gameScene);
+}
+
+// ------------------------------------------------------------------ limited-map particle effects
+// fx/<key>.js (tools/export_fx.py): the game's .sbfx particle systems, re-simulated here. Each instance is an emitter at
+// the position of the event model it is attached to; particles live in the instance's local frame. Ramps are
+// [[time, min, range], ...] (colour ramps: [[time, color0, color1]]): value = min + rand * range, interpolated over time.
+const FX_RANGE = 700, FX_WARM = 4, fxCache = {};
+const QUAD_MODES = ['camera', 'velocity', 'xaxis', 'yaxis', 'xy', 'xz', 'yz', 'camera'];
+function loadFxData(key) {
+  if (NF.fx[key]) return Promise.resolve(NF.fx[key]);
+  return new Promise((res, rej) => {
+    (NF.fxWaiters[key] ||= []).push(res);
+    const s = document.createElement('script'); s.src = `fx/${encodeURIComponent(key)}.js`;
+    s.onerror = () => rej(new Error(`fx/${key}.js`)); document.head.appendChild(s);
+  });
+}
+function mkRamp(rp, def) {
+  if (!rp || !rp.k || !rp.k.length) return () => def;
+  const k = rp.k, col = rp.t === 'c';
+  const val = (key, r) => col ? key[1].map((a, i) => a + (key[2][i] - a) * r)
+    : Array.isArray(key[1]) ? key[1].map((a, i) => a + key[2][i] * r) : key[1] + key[2] * r;
+  if (k.length === 1) return (t, r) => val(k[0], r);
+  return (t, r) => {
+    if (t <= k[0][0]) return val(k[0], r);
+    for (let i = 1; i < k.length; i++) if (t <= k[i][0]) {
+      const a = val(k[i - 1], r), b = val(k[i], r), f = (t - k[i - 1][0]) / Math.max(1e-6, k[i][0] - k[i - 1][0]);
+      return Array.isArray(a) ? a.map((x, j) => x + (b[j] - x) * f) : a + (b - a) * f;
+    }
+    return val(k[k.length - 1], r);
+  };
+}
+function compileFx(def) {
+  const forces = (def.forces || []).map(f => ({g: mkRamp(f.p.global, [0, 0, 0, 0]), drag: mkRamp(f.p.drag, 0)}));
+  const clouds = [];
+  for (const c of def.clouds) {
+    const em = c.emitters[0]; if (!em || !c.renderers.length) continue;
+    const P = em.p, L = c.life;
+    clouds.push({max: Math.min(c.max || 50, 300), lifetime: c.lifetime || 0, delay: c.delay || 0, age: c.age,
+      forces: c.nodes.includes('Forces') ? forces : [], spin: c.nodes.includes('IntegrateRotation'),
+      shape: em.shape, dir: em.dir, prob: em.prob ?? 1,
+      rate: mkRamp(P.rate, 0), speed: mkRamp(P.speed, 0), spread: mkRamp(P.spread, 0),
+      u: mkRamp(P.u, 0.5), v: mkRamp(P.v, 0.5), w: mkRamp(P.w, 0.5),
+      eS: mkRamp(P.scale, [1, 1, 1, 1]), eT: mkRamp(P.translation, [0, 0, 0, 0]), eR: mkRamp(P.rotation, [0, 0, 0, 0]),
+      bRot: mkRamp(em.birth.rotation, 0),
+      color: mkRamp(L.color, [1, 1, 1, 1]), scale: mkRamp(L.scale, [1, 1, 1, 1]), rot: mkRamp(L.rotation, 0),
+      frame: L.textureFlipbook0 ? mkRamp(L.textureFlipbook0, 0) : null,
+      rends: c.renderers});
+  }
+  return {speed: def.speed || 1, preRoll: def.preRoll || 0, clouds};
+}
+const FX_VS = `attribute vec3 iP; attribute vec3 iA; attribute vec3 iB; attribute vec4 iC; attribute vec4 iUV;
+varying vec2 vUv; varying vec4 vC;
+#include <fog_pars_vertex>
+void main() {
+  vec3 p = iP + iA * position.x + iB * position.y;
+  vUv = iUV.xy + vec2(position.x, 1.0 - position.y) * iUV.zw; vC = iC;
+  vec4 mvPosition = modelViewMatrix * vec4(p, 1.0); gl_Position = projectionMatrix * mvPosition;
+  #include <fog_vertex>
+}`;
+const FX_FS = `uniform sampler2D map; varying vec2 vUv; varying vec4 vC;
+#include <fog_pars_fragment>
+void main() {
+  vec4 c = texture2D(map, vUv) * vC;
+  if (c.a < 0.004) discard;
+  #ifdef USE_FOG
+    float f = smoothstep(fogNear, fogFar, vFogDepth);
+    #ifdef ADDITIVE
+      c.rgb *= 1.0 - f;
+    #else
+      c.rgb = mix(c.rgb, fogColor, f);
+    #endif
+  #endif
+  gl_FragColor = c;
+}`;
+function fxBatch(sys, tex, blend) {
+  const key = tex + '|' + blend;
+  if (sys.batches[key]) return sys.batches[key];
+  const g = new THREE.InstancedBufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0]), 3));
+  g.setIndex([0, 1, 2, 2, 1, 3]);
+  const b = {g, cap: 0, n: 0, arr: {}};
+  const grow = cap => {
+    b.cap = cap;
+    for (const [nm, sz] of [['iP', 3], ['iA', 3], ['iB', 3], ['iC', 4], ['iUV', 4]]) {
+      const a = new Float32Array(cap * sz); if (b.arr[nm]) a.set(b.arr[nm]); b.arr[nm] = a;
+      const at = new THREE.InstancedBufferAttribute(a, sz); at.setUsage(THREE.DynamicDrawUsage); g.setAttribute(nm, at);
+    }
+  };
+  b.grow = grow; grow(256);
+  const t = sys.textures[tex];
+  const m = new THREE.ShaderMaterial({vertexShader: FX_VS, fragmentShader: FX_FS, transparent: true, depthWrite: false, fog: true,
+    side: THREE.DoubleSide, blending: blend === 'add' ? THREE.AdditiveBlending : THREE.NormalBlending,
+    defines: blend === 'add' ? {ADDITIVE: ''} : {},
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {map: {value: null}}])});
+  m.uniforms.map.value = t;
+  const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false; mesh.renderOrder = blend === 'add' ? 3 : 2;
+  sys.group.add(mesh); b.mesh = mesh;
+  return sys.batches[key] = b;
+}
+async function ensureFx(stem, parent) {
+  if (fxCache[stem]) { FXS = fxCache[stem]; return; }
+  let data; try { data = await loadFxData(stem); } catch (e) { return; }
+  if (fxCache[stem]) { FXS = fxCache[stem]; return; }
+  const textures = {};
+  for (const [k, uri] of Object.entries(data.textures)) {
+    const tx = new THREE.TextureLoader().load(uri); tx.flipY = false; tx.colorSpace = THREE.NoColorSpace; textures[k] = tx;
+  }
+  const defs = {}; for (const [k, d] of Object.entries(data.defs)) defs[k] = compileFx(d);
+  const group = new THREE.Group(); group.name = 'fx'; parent.add(group);
+  const insts = data.instances.filter(i => defs[i[0]]).map(([name, p, m]) => {
+    const R = new THREE.Matrix3().fromArray(m), M = new THREE.Matrix4().setFromMatrix3(R).setPosition(p[0], p[1], p[2]);
+    const sc = Math.cbrt(Math.abs(R.determinant())) || 1;
+    return {def: defs[name], pos: new THREE.Vector3(...p), M, R, sc, active: false, t: 0,
+            clouds: defs[name].clouds.map(() => ({ps: [], acc: 0}))};
+  });
+  FXS = fxCache[stem] = {stem, group, insts, textures, batches: {}};
+}
+let FXS = null;
+const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _e = new THREE.Euler(), _q = new THREE.Matrix4();
+function fxSpawn(inst, c, cs, te) {
+  const r = Math.random;
+  const Sc = c.eS(te, 0.5), T = c.eT(te, 0.5), Rr = c.eR(te, 0.5);
+  const u = c.u(te, r()), v = c.v(te, r()), w = c.w(te, r());
+  let p = [0, 0, 0], n = [0, 1, 0];
+  switch (c.shape) {
+    case 2: { const th = 2 * Math.PI * v, cz = 1 - 2 * w, sz = Math.sqrt(Math.max(0, 1 - cz * cz));
+      n = [sz * Math.cos(th), cz, sz * Math.sin(th)]; p = n.map(x => x * u); break; }
+    case 3: p = [u - 0.5, v - 0.5, w - 0.5]; break;
+    case 4: case 5: p = [u - 0.5, 0, v - 0.5]; break;
+    case 6: { const th = 2 * Math.PI * v; p = [Math.cos(th) * u, 0, Math.sin(th) * u]; break; }
+    case 7: case 8: { const th = 2 * Math.PI * v; n = [Math.cos(th), 0, Math.sin(th)]; p = [n[0] * u, w - 0.5, n[2] * u]; break; }
+  }
+  _e.set(Rr[0], Rr[1], Rr[2]); _q.makeRotationFromEuler(_e);
+  const pos = new THREE.Vector3(p[0] * Sc[0], p[1] * Sc[1], p[2] * Sc[2]).applyMatrix4(_q).add(_v.set(T[0], T[1], T[2]));
+  const d = (c.dir === 0 ? new THREE.Vector3(...n) : new THREE.Vector3(0, 1, 0)).applyMatrix4(_q).normalize();
+  const a = Math.abs(c.spread(te, r()));
+  if (a > 1e-4) {                                       // deviate inside a cone of half-angle `a`
+    const o = Math.abs(d.y) < 0.9 ? _v.set(0, 1, 0) : _v.set(1, 0, 0);
+    const x = new THREE.Vector3().crossVectors(d, o).normalize(), y = new THREE.Vector3().crossVectors(d, x);
+    const ang = a * Math.sqrt(r()), az = 2 * Math.PI * r();
+    d.multiplyScalar(Math.cos(ang)).addScaledVector(x, Math.sin(ang) * Math.cos(az)).addScaledVector(y, Math.sin(ang) * Math.sin(az));
+  }
+  const vel = d.multiplyScalar(c.speed(te, r()));
+  const gR = r(), g = new THREE.Vector3(); let drag = 0;
+  for (const f of c.forces) { const gg = f.g(0, gR); g.x += gg[0]; g.y += gg[1]; g.z += gg[2]; drag += f.drag(0, gR); }
+  cs.ps.push({p: pos, v: vel, g, drag, age: 0, life: Math.max(0.05, c.age[0] + r() * c.age[1]), r: r(), rot: c.bRot(te, r()), r2: r()});
+}
+function fxSim(inst, dt) {
+  const def = inst.def; dt *= def.speed; inst.t += dt;
+  def.clouds.forEach((c, ci) => {
+    const cs = inst.clouds[ci], tl = inst.t - c.delay;
+    const live = [];
+    for (const q of cs.ps) {
+      q.age += dt / q.life; if (q.age >= 1) continue;
+      q.v.addScaledVector(q.g, dt); if (q.drag) q.v.multiplyScalar(Math.max(0, 1 - q.drag * dt));
+      q.p.addScaledVector(q.v, dt);
+      if (c.spin) q.rot += c.rot(q.age, q.r) * dt;
+      live.push(q);
+    }
+    cs.ps = live;
+    if (tl < 0) return;
+    const te = c.lifetime > 0 ? (tl % c.lifetime) / c.lifetime : 0;
+    cs.acc += c.rate(te, 0.5) * dt;
+    while (cs.acc >= 1) { cs.acc -= 1; if (cs.ps.length < c.max && Math.random() <= c.prob) fxSpawn(inst, c, cs, te); }
+  });
+}
+function fxStep(dt) {
+  const on = FXS && G.gameScene && G.gameScene.visible && G.gameEntry?.stem === FXS.stem && $('#lyFx').checked;
+  if (FXS) FXS.group.visible = !!on;
+  if (!on) return;
+  dt = Math.min(dt, 0.1);
+  const c = cam(); G.gameScene.updateMatrixWorld();
+  const inv = new THREE.Matrix4().copy(G.gameScene.matrixWorld).invert();
+  const eye = c.position.clone().applyMatrix4(inv);
+  const right = new THREE.Vector3().setFromMatrixColumn(c.matrixWorld, 0).transformDirection(inv);
+  const up = new THREE.Vector3().setFromMatrixColumn(c.matrixWorld, 1).transformDirection(inv);
+  for (const b of Object.values(FXS.batches)) b.n = 0;
+  const wp = new THREE.Vector3(), wv = new THREE.Vector3(), ax = new THREE.Vector3(), ay = new THREE.Vector3(), tc = new THREE.Vector3();
+  for (const inst of FXS.insts) {
+    const near = inst.pos.distanceTo(eye) < FX_RANGE;
+    if (!near) { if (inst.active) { inst.active = false; inst.clouds.forEach(cs => { cs.ps = []; cs.acc = 0; }); } continue; }
+    if (!inst.active) {                                 // warm up so smoke / swarms are already there
+      inst.active = true; inst.t = 0;
+      const w = Math.min(inst.def.preRoll, FX_WARM) / inst.def.speed;
+      for (let s = 0; s < w; s += 1 / 15) fxSim(inst, 1 / 15);
+    }
+    fxSim(inst, dt);
+    inst.def.clouds.forEach((cl, ci) => {
+      for (const q of inst.clouds[ci].ps) {
+        wp.copy(q.p).applyMatrix4(inst.M);
+        const col = cl.color(q.age, q.r), scl = cl.scale(q.age, q.r2);
+        if (col[3] <= 0.003) continue;
+        const rot = cl.spin ? q.rot : q.rot + cl.rot(q.age, q.r);
+        for (const rd of cl.rends) {
+          const mode = QUAD_MODES[rd.mode] || 'camera';
+          const w2 = 2 * rd.half[0] * scl[0] * inst.sc, h2 = 2 * rd.half[1] * scl[1] * inst.sc;
+          tc.copy(eye).sub(wp).normalize();
+          if (mode === 'velocity' || mode === 'xaxis' || mode === 'yaxis') {
+            if (mode === 'velocity') wv.copy(q.v).applyMatrix3(inst.R); else wv.set(mode === 'xaxis' ? 1 : 0, mode === 'yaxis' ? 1 : 0, 0).applyMatrix3(inst.R);
+            if (wv.lengthSq() < 1e-12) wv.set(0, 1, 0);
+            ay.copy(wv).normalize(); ax.crossVectors(ay, tc).normalize();
+          } else if (mode === 'xy' || mode === 'xz' || mode === 'yz') {
+            ax.set(mode === 'yz' ? 0 : 1, 0, mode === 'yz' ? 1 : 0).applyMatrix3(inst.R).normalize();
+            ay.set(0, mode === 'xz' ? 0 : 1, mode === 'xz' ? 1 : 0).applyMatrix3(inst.R).normalize();
+            if (mode === 'yz') ax.set(0, 1, 0).applyMatrix3(inst.R).normalize(), ay.set(0, 0, 1).applyMatrix3(inst.R).normalize();
+          } else { ax.copy(right); ay.copy(up); }
+          if (rot) { const cr = Math.cos(rot), sr = Math.sin(rot), x0 = ax.clone(); ax.multiplyScalar(cr).addScaledVector(ay, sr); ay.multiplyScalar(cr).addScaledVector(x0, -sr); }
+          ax.multiplyScalar(w2); ay.multiplyScalar(h2);
+          const b = fxBatch(FXS, rd.tex, rd.blend);
+          if (b.n >= b.cap) b.grow(b.cap * 2);
+          const i = b.n++, A = b.arr, pv = rd.pivot || [0.5, 0.5], pull = rd.pull || 0;
+          A.iP[i * 3] = wp.x - ax.x * pv[0] - ay.x * pv[1] + tc.x * pull;
+          A.iP[i * 3 + 1] = wp.y - ax.y * pv[0] - ay.y * pv[1] + tc.y * pull;
+          A.iP[i * 3 + 2] = wp.z - ax.z * pv[0] - ay.z * pv[1] + tc.z * pull;
+          A.iA.set([ax.x, ax.y, ax.z], i * 3); A.iB.set([ay.x, ay.y, ay.z], i * 3);
+          A.iC.set([col[0], col[1], col[2], Math.min(1, col[3])], i * 4);
+          if (rd.flip) {
+            const n = rd.flip.u * rd.flip.v, f = cl.frame ? Math.floor(cl.frame(q.age, q.r2)) : Math.floor(q.age * (rd.flip.n || n));
+            const fr = ((f % n) + n) % n;
+            A.iUV.set([(fr % rd.flip.u) / rd.flip.u, Math.floor(fr / rd.flip.u) / rd.flip.v, 1 / rd.flip.u, 1 / rd.flip.v], i * 4);
+          } else A.iUV.set([0, 0, 1, 1], i * 4);
+        }
+      }
+    });
+  }
+  for (const b of Object.values(FXS.batches)) {
+    b.g.instanceCount = b.n; b.mesh.visible = b.n > 0;
+    if (b.n) for (const nm of ['iP', 'iA', 'iB', 'iC', 'iUV']) b.g.getAttribute(nm).needsUpdate = true;
+  }
 }
 function setRender(r) {
   if (r === S.render) { if (r === 'game') ensureGame(); return; }
@@ -1270,6 +1504,9 @@ function saveHash() {
 }
 function loadMap(key) {
   if (NF.maps[key]) return Promise.resolve(NF.maps[key]);
+  // limited-time versions reuse the base map's races: data/<base>.js plus the entry's own key / event name
+  const ie = (NF.index || []).find(m => m.key === key);
+  if (ie?.base) return loadMap(ie.base).then(b => NF.maps[key] ||= {...b, key, event: ie.event, event_en: ie.event_en, base: ie.base, limited: true});
   return new Promise((res, rej) => {
     (NF.waiters[key] ||= []).push(res);
     const s = document.createElement('script'); s.src = `data/${encodeURIComponent(key)}.js`;
@@ -1292,7 +1529,7 @@ async function selectMap(key, ti = 0, race = -1) {
     document.querySelectorAll('#maps .item').forEach(b => b.setAttribute('aria-current', String(b.dataset.key === key)));
     document.querySelector('#maps .item[aria-current="true"]')?.scrollIntoView({block: 'nearest'});
     $('#regnum').textContent = m.region != null ? String(m.region).padStart(2, '0') : '—';
-    $('#kicker').textContent = m.region != null ? `Region ${String(m.region).padStart(2, '0')}` : 'Scene';
+    $('#kicker').textContent = (m.region != null ? `Region ${String(m.region).padStart(2, '0')}` : 'Scene') + (m.limited ? ' · Limited' : '');
     $('#place').textContent = m.place;
     $('#event').hidden = !m.event; $('#event').textContent = m.event || '';
     const tabs = $('#tracks'); tabs.textContent = '';
@@ -1301,6 +1538,9 @@ async function selectMap(key, ti = 0, race = -1) {
       b.addEventListener('click', () => selectTrack(i)); tabs.appendChild(b);
     });
     $('#rGame').setAttribute('aria-disabled', String(!sceneEntry(m)));
+    // a limited version only differs in scenery: show it in the original-track render
+    if (m.limited && S.render !== 'game' && sceneEntry(m)) { S.render = 'game'; S.exagSchem = S.exag;
+      $('#rSchem').setAttribute('aria-pressed', 'false'); $('#rGame').setAttribute('aria-pressed', 'true'); setExag(1, true); }
     selectTrack(Math.min(Math.max(0, ti), m.tracks.length - 1), race);
     document.title = `${m.title}${m.event ? ' · ' + m.event : ''} — NFSNL 赛道图鉴`;
     showMsg('');
@@ -1324,13 +1564,20 @@ function selectTrack(ti, race = -1) {
 function buildMapList() {
   const nav = $('#maps'), q = $('#q').value.trim().toLowerCase(), mob = $('#mapSelMobile');
   nav.textContent = ''; mob.textContent = '';
-  // one row per map: region number, place, length (or route count)
+  // one row per map: region number, place, length (or route count); limited-time versions in their own group
+  let grp = null, mgrp = null;
   for (const m of NF.index) {
     const num = m.region != null ? String(m.region).padStart(2, '0') : '··';
-    const label = m.event ? `${m.place} · ${m.event}` : m.place;
+    const label = m.limited ? `${m.event} · ${m.place}` : m.event ? `${m.place} · ${m.event}` : m.place;
     const lens = m.tracks.map(t => km(t.length, 1)).join(' / ');
-    const o = document.createElement('option'); o.value = m.key; o.textContent = `${num} ${label} · ${lens} km`; mob.appendChild(o);
-    if (q && !`${num} ${m.title} ${m.place} ${m.event} ${m.key}`.toLowerCase().includes(q)) continue;
+    if (m.limited && !mgrp) { mgrp = document.createElement('optgroup'); mgrp.label = '限定地图'; mob.appendChild(mgrp); }
+    const o = document.createElement('option'); o.value = m.key; o.textContent = `${num} ${label} · ${lens} km`; (m.limited ? mgrp : mob).appendChild(o);
+    if (q && !`${num} ${m.title} ${m.place} ${m.event} ${m.event_en || ''} ${m.limited ? '限定 limited' : ''} ${m.key}`.toLowerCase().includes(q)) continue;
+    if (m.limited && !grp) {
+      grp = document.createElement('div'); grp.className = 'grp-h'; grp.textContent = '限定地图';
+      const c = document.createElement('span'); c.className = 'n'; c.textContent = String(NF.index.filter(x => x.limited).length); grp.appendChild(c);
+      nav.appendChild(grp);
+    }
     const b = document.createElement('button'); b.className = 'item'; b.dataset.key = m.key;
     b.setAttribute('aria-current', String(S.map?.key === m.key));
     const n = document.createElement('span'); n.className = 'n'; n.textContent = num;
@@ -1340,7 +1587,8 @@ function buildMapList() {
     nav.appendChild(b);
   }
   if (S.map) mob.value = S.map.key;
-  $('#foot').textContent = `${NF.index.length} 张地图 · ${(NF.sceneIndex || []).length} 个原赛道场景`;
+  const nl = NF.index.filter(m => m.limited).length;
+  $('#foot').textContent = `${NF.index.length - nl} 张地图 · ${nl} 个限定版 · ${(NF.sceneIndex || []).length} 个原赛道场景`;
 }
 
 // ------------------------------------------------------------------ controls wiring
@@ -1380,7 +1628,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if
 
 // ------------------------------------------------------------------ boot
 let last = performance.now();
-window.__nfsnl = {DRV, car, persp};                         // debug hook (used by the automated smoothness test)
+window.__nfsnl = {DRV, car, persp, fx: () => FXS, fxStep, driveStep};                         // debug hook (used by the automated smoothness test)
 (function loop(t) {
   requestAnimationFrame(loop);
   // frame timestamp step: the drive keeps its speed even when the frame rate drops (capped after a stall / hidden tab)
@@ -1394,6 +1642,7 @@ window.__nfsnl = {DRV, car, persp};                         // debug hook (used 
     }
     ctl().update(); doHover();
   }
+  fxStep(dt);
   renderer.render(scene, cam());
 })();
 

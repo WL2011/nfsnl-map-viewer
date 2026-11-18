@@ -330,5 +330,164 @@ NFSNL.setIndex([
   "ymin": -32.4,
   "ymax": 13.8,
   "kb": 304
+ },
+ {
+  "key": "christmas_2022_region02_hopebridge",
+  "scene": "final_region02_hopebridge.scene.sb",
+  "region": 2,
+  "place": "Hopebridge",
+  "event": "圣诞 2022",
+  "title": "Region 02 · Hopebridge",
+  "tracks": [
+   {
+    "name": "Track_01",
+    "length": 3518.1,
+    "loop": false,
+    "races": 8,
+    "splines": 9,
+    "points": 4744,
+    "checkpoints": 24
+   }
+  ],
+  "ymin": -4.0,
+  "ymax": 10.6,
+  "kb": 97,
+  "event_en": "Christmas 2022",
+  "base": "final_region02_hopebridge",
+  "limited": true
+ },
+ {
+  "key": "halloween_2024_region02_hopebridge",
+  "scene": "final_region02_hopebridge.scene.sb",
+  "region": 2,
+  "place": "Hopebridge",
+  "event": "万圣节 2024",
+  "title": "Region 02 · Hopebridge",
+  "tracks": [
+   {
+    "name": "Track_01",
+    "length": 3518.1,
+    "loop": false,
+    "races": 8,
+    "splines": 9,
+    "points": 4744,
+    "checkpoints": 24
+   }
+  ],
+  "ymin": -4.0,
+  "ymax": 10.6,
+  "kb": 97,
+  "event_en": "Halloween 2024",
+  "base": "final_region02_hopebridge",
+  "limited": true
+ },
+ {
+  "key": "winter_2024_region02_hopebridge",
+  "scene": "final_region02_hopebridge.scene.sb",
+  "region": 2,
+  "place": "Hopebridge",
+  "event": "冬季 2024",
+  "title": "Region 02 · Hopebridge",
+  "tracks": [
+   {
+    "name": "Track_01",
+    "length": 3518.1,
+    "loop": false,
+    "races": 8,
+    "splines": 9,
+    "points": 4744,
+    "checkpoints": 24
+   }
+  ],
+  "ymin": -4.0,
+  "ymax": 10.6,
+  "kb": 97,
+  "event_en": "Winter 2024",
+  "base": "final_region02_hopebridge",
+  "limited": true
+ },
+ {
+  "key": "halloween_2023_region08_mountain",
+  "scene": "final_region08_mountain.scene.sb",
+  "region": 8,
+  "place": "Mountain",
+  "event": "万圣节 2023",
+  "title": "Region 08 · Mountain",
+  "tracks": [
+   {
+    "name": "track01",
+    "length": 5822.0,
+    "loop": false,
+    "races": 16,
+    "splines": 15,
+    "points": 9440,
+    "checkpoints": 48
+   }
+  ],
+  "ymin": 10.0,
+  "ymax": 220.6,
+  "kb": 194,
+  "event_en": "Halloween 2023",
+  "base": "final_region08_mountain",
+  "limited": true
+ },
+ {
+  "key": "halloween_2022_region09_desert",
+  "scene": "region09_desert.scene.sb",
+  "region": 9,
+  "place": "Desert",
+  "event": "万圣节 2022",
+  "title": "Region 09 · Desert",
+  "tracks": [
+   {
+    "name": "track01",
+    "length": 11116.7,
+    "loop": false,
+    "races": 24,
+    "splines": 26,
+    "points": 3424,
+    "checkpoints": 72
+   },
+   {
+    "name": "track02",
+    "length": 13567.2,
+    "loop": false,
+    "races": 10,
+    "splines": 18,
+    "points": 4792,
+    "checkpoints": 30
+   }
+  ],
+  "ymin": -11.7,
+  "ymax": 155.1,
+  "kb": 500,
+  "event_en": "Halloween 2022",
+  "base": "region09_desert",
+  "limited": true
+ },
+ {
+  "key": "christmas_2023_region10_rural",
+  "scene": "region10_rural.scene.sb",
+  "region": 10,
+  "place": "Rural",
+  "event": "圣诞 2023",
+  "title": "Region 10 · Rural",
+  "tracks": [
+   {
+    "name": "track01",
+    "length": 7167.8,
+    "loop": false,
+    "races": 18,
+    "splines": 13,
+    "points": 2684,
+    "checkpoints": 54
+   }
+  ],
+  "ymin": -10.5,
+  "ymax": 14.6,
+  "kb": 139,
+  "event_en": "Christmas 2023",
+  "base": "region10_rural",
+  "limited": true
  }
 ]);

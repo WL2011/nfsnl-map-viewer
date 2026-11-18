@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from export_map import (Store, decode_vb, decode_ib, decode_image, find_material_file, material_vars, tex_name,
                         matvar_index, scene_instances, WRAP)
 from sbtyped import TypedSB
+from events import EVENTS, pack_remaps
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LM_RANGE = 1.6
@@ -26,17 +27,27 @@ PAD = 2
 
 
 # ------------------------------------------------------------------ textures
-def best_texture(store, name):
-    best = None
-    for raw in store.read(name):
-        try:
-            t = TypedSB(raw); tex = t.get(t.root, 2)
-        except Exception:
-            continue
-        if isinstance(tex, dict) and tex.get('_type') == 'Texture' and tex.get('mipmaps'):
-            top = max(m['width'] for m in tex['mipmaps'])
-            if best is None or top > best[0]: best = (top, t, tex)
-    return best
+def best_texture(store, name, remaps=None, prefer=()):
+    """Largest copy of texture `name`. With `remaps` ({pack id: remap tags}) the copy is taken from a pack of the
+    preferred event (`prefer` remap tags) first, then from a base pack, and only then from another event's pack,
+    so a base map never shows Christmas textures and an event map shows its own."""
+    groups = [[], [], []]
+    for pid, f in store.index.get(name, []):
+        tags = (remaps or {}).get(pid, set())
+        groups[0 if tags & set(prefer) else 1 if not tags else 2].append((pid, f))
+    for cands in groups:
+        best = None
+        for pid, f in cands:
+            try:
+                raw = store.read_entry(pid, f)
+                t = TypedSB(raw); tex = t.get(t.root, 2)
+            except Exception:
+                continue
+            if isinstance(tex, dict) and tex.get('_type') == 'Texture' and tex.get('mipmaps'):
+                top = max(m['width'] for m in tex['mipmaps'])
+                if best is None or top > best[0]: best = (top, t, tex)
+        if best: return best
+    return None
 
 
 def texture_image(t, tex, tex_max):
@@ -143,21 +154,34 @@ class Glb:
 
 
 # ------------------------------------------------------------------ scene
-def export(store, scene_name, tex_max, log=print):
-    t, inst_ids = scene_instances(store, scene_name)
-    mat_file = find_material_file(store, scene_name)
-    if not inst_ids or not mat_file:
+def lit_material_file(store, scene_name, lit=None):
+    """Lightmaps file of a static scene; with `lit`, the one whose lighting name contains it."""
+    if lit:
+        stem = scene_name[:-len('.scene_static.sba')]
+        for n in sorted(store.index):
+            if n.startswith(stem + '.') and n.endswith('.scene_static.lightmaps.sba') and lit in n: return n
+    return find_material_file(store, scene_name)
+
+
+def export(store, scene_names, tex_max, log=print, remaps=None, prefer=(), lit=None):
+    """Merge one or more static scenes (each with its own lightmaps file) into one GLB."""
+    if isinstance(scene_names, str): scene_names = [scene_names]
+    parts = []
+    for n in scene_names:
+        t, inst_ids = scene_instances(store, n)
+        mat_file = lit_material_file(store, n, lit)
+        if inst_ids and mat_file: parts.append((n, t, inst_ids, mat_file))
+    if not parts or parts[0][0] != scene_names[0]:
         return None
-    mv = material_vars(store, mat_file)
-    lms = Lightmaps(store, mat_file)
-    lit = re.search(r'lit_scene_?([a-z]*)', mat_file).group(1) or 'day'
-    buckets = {}; tex_cache = {}; g = Glb(); missing = set()
+    mat_file0 = parts[0][3]
+    if lit is None: lit = re.search(r'lit_scene_?([a-z]*)', mat_file0).group(1) or 'day'
+    buckets = {}; tex_cache = {}; g = Glb(); missing = set(); all_lms = []
 
     def texture(name, maxsize):
         key = (name, maxsize)
         if key not in tex_cache:
             tex_cache[key] = None
-            bt = best_texture(store, name) if name else None
+            bt = best_texture(store, name, remaps, prefer) if name else None
             if bt:
                 img = texture_image(bt[1], bt[2], maxsize)
                 if img is not None:
@@ -168,47 +192,54 @@ def export(store, scene_name, tex_max, log=print):
                 missing.add(name)
         return tex_cache[key]
 
-    vb_cache = {}
-    for ref in inst_ids:
-        inst = t.get(ref[1], 2)
-        prim_ref = struct.unpack_from('<I', t.D, t.raw_struct(ref[1])[1] + 68)[0]
-        prim = t.get(prim_ref, 8)
-        if prim['type'] != 1 or not prim['vertex_buffer'] or not prim['index_buffer']: continue
-        vbk = id(prim['vertex_buffer'])
-        if vbk not in vb_cache: vb_cache[vbk] = decode_vb(t, prim['vertex_buffer'])
-        V = vb_cache[vbk]
-        I = decode_ib(t, prim['index_buffer'])[prim['index_offset']:prim['index_offset'] + prim['index_count']]
-        used, I2 = np.unique(I, return_inverse=True)
-        P = V[('Position', 0)][used][:, :3]
-        T = inst['transform']
-        M = np.array([[T[r][c] for c in ('x', 'y', 'z', 'w')] for r in ('x', 'y', 'z', 'translation')])
-        P = (np.c_[P, np.ones(len(P))] @ M)[:, :3]
-        UV0 = V[('TexCoord', 0)][used][:, :2] if ('TexCoord', 0) in V else np.zeros((len(used), 2))
-        UV1 = V[('TexCoord', 1)][used][:, :2] if ('TexCoord', 1) in V else None
-        k = matvar_index(inst)
-        v = mv[k] if k is not None and k < len(mv) else None
-        diffuse = tex_name(v['diffuse']) if v else None
-        glow = tex_name(v['glow_map']) if v else None
-        flags = v['flags'] if v else 0
-        page = -1
-        if v and UV1 is not None and isinstance(v.get('light_map'), dict):
-            m = re.search(r'#lightmaps#(\d+)$', v['light_map'].get('path', ''))
-            sbm = re.search(r'#scalebias#(\d+)#', v.get('scale') or '')
-            if m:
-                try:
-                    img = lms.image(int(m.group(1)), int(sbm.group(1)) if sbm else None)
-                    page, x, y, w, h = lms.place(img)
-                    u = np.clip(UV1, 0, 1)
-                    UV1 = np.c_[(x + u[:, 0] * w) / PAGE, (y + u[:, 1] * h) / PAGE]
-                except Exception as e:
-                    page = -1
-        key = (diffuse, glow, flags, page)
-        b = buckets.setdefault(key, dict(P=[], UV0=[], UV1=[], I=[], n=0))
-        b['P'].append(P.astype(np.float32)); b['UV0'].append(UV0.astype(np.float32))
-        b['UV1'].append((UV1 if page >= 0 else np.zeros((len(used), 2))).astype(np.float32))
-        b['I'].append(I2.astype(np.int64) + b['n']); b['n'] += len(used)
+    n_inst = 0
+    for scene_name, t, inst_ids, mat_file in parts:
+        mv = material_vars(store, mat_file)
+        lms = Lightmaps(store, mat_file); all_lms.append(lms); li = len(all_lms) - 1
+        vb_cache = {}; n_inst += len(inst_ids)
+        for ref in inst_ids:
+            inst = t.get(ref[1], 2)
+            prim_ref = struct.unpack_from('<I', t.D, t.raw_struct(ref[1])[1] + 68)[0]
+            prim = t.get(prim_ref, 8)
+            if prim['type'] != 1 or not prim['vertex_buffer'] or not prim['index_buffer']: continue
+            vbk = id(prim['vertex_buffer'])
+            if vbk not in vb_cache: vb_cache[vbk] = decode_vb(t, prim['vertex_buffer'])
+            V = vb_cache[vbk]
+            I = decode_ib(t, prim['index_buffer'])[prim['index_offset']:prim['index_offset'] + prim['index_count']]
+            used, I2 = np.unique(I, return_inverse=True)
+            P = V[('Position', 0)][used][:, :3]
+            T = inst['transform']
+            M = np.array([[T[r][c] for c in ('x', 'y', 'z', 'w')] for r in ('x', 'y', 'z', 'translation')])
+            P = (np.c_[P, np.ones(len(P))] @ M)[:, :3]
+            UV0 = V[('TexCoord', 0)][used][:, :2] if ('TexCoord', 0) in V else np.zeros((len(used), 2))
+            UV1 = V[('TexCoord', 1)][used][:, :2] if ('TexCoord', 1) in V else None
+            k = matvar_index(inst)
+            v = mv[k] if k is not None and k < len(mv) else None
+            diffuse = tex_name(v['diffuse']) if v else None
+            glow = tex_name(v['glow_map']) if v else None
+            flags = v['flags'] if v else 0
+            page = -1
+            if v and UV1 is not None and isinstance(v.get('light_map'), dict):
+                m = re.search(r'#lightmaps#(\d+)$', v['light_map'].get('path', ''))
+                sbm = re.search(r'#scalebias#(\d+)#', v.get('scale') or '')
+                if m:
+                    try:
+                        img = lms.image(int(m.group(1)), int(sbm.group(1)) if sbm else None)
+                        page, x, y, w, h = lms.place(img)
+                        u = np.clip(UV1, 0, 1)
+                        UV1 = np.c_[(x + u[:, 0] * w) / PAGE, (y + u[:, 1] * h) / PAGE]
+                    except Exception as e:
+                        page = -1
+            key = (diffuse, glow, flags, (li, page) if page >= 0 else -1)
+            b = buckets.setdefault(key, dict(P=[], UV0=[], UV1=[], I=[], n=0))
+            b['P'].append(P.astype(np.float32)); b['UV0'].append(UV0.astype(np.float32))
+            b['UV1'].append((UV1 if page >= 0 else np.zeros((len(used), 2))).astype(np.float32))
+            b['I'].append(I2.astype(np.int64) + b['n']); b['n'] += len(used)
     # lightmap atlas pages
-    lm_tex = [g.texture(encode(pg, False, 85)[0], 'image/jpeg', 33071, 33071, f'lightmap_atlas_{i}') for i, pg in enumerate(lms.pages)]
+    lm_tex = {}
+    for li, lms in enumerate(all_lms):
+        for i, pg in enumerate(lms.pages):
+            lm_tex[(li, i)] = g.texture(encode(pg, False, 85)[0], 'image/jpeg', 33071, 33071, f'lightmap_atlas_{li}_{i}')
     ntri = nvert = 0
     for (diffuse, glow, flags, page), b in buckets.items():
         P = np.concatenate(b['P']); UV0 = np.concatenate(b['UV0']); UV1 = np.concatenate(b['UV1']); I = np.concatenate(b['I'])
@@ -222,7 +253,7 @@ def export(store, scene_name, tex_max, log=print):
         g.j['bufferViews'][pa['bufferView']]['byteStride'] = 8
         g.j['accessors'].append(pa)
         attrs = dict(POSITION=len(g.j['accessors']) - 1, TEXCOORD_0=g.acc(np.ascontiguousarray(UV0), 'VEC2', 5126, 34962))
-        if page >= 0:
+        if page != -1:
             U = np.clip(np.round(UV1 * 65535), 0, 65535).astype(np.uint16)
             ua = dict(bufferView=g.view(U.tobytes(), 34962), componentType=5123, normalized=True, count=len(U), type='VEC2')
             g.j['accessors'].append(ua); attrs['TEXCOORD_1'] = len(g.j['accessors']) - 1
@@ -237,7 +268,7 @@ def export(store, scene_name, tex_max, log=print):
         if flags & 1: mat['doubleSided'] = True
         gl = texture(glow, min(256, tex_max)) if glow else None
         if gl: mat['emissiveTexture'] = dict(index=gl[0]); mat['emissiveFactor'] = [1, 1, 1]
-        if page >= 0: mat['extras']['lightmap'] = lm_tex[page]
+        if page != -1: mat['extras']['lightmap'] = lm_tex[page]
         g.j['materials'].append(mat)
         g.j['meshes'].append(dict(primitives=[dict(attributes=attrs, indices=g.acc(idx, 'SCALAR', 5125 if idx.dtype == np.uint32 else 5123, 34963),
                                                    material=len(g.j['materials']) - 1, mode=4)]))
@@ -245,9 +276,10 @@ def export(store, scene_name, tex_max, log=print):
         g.j['scenes'][0]['nodes'].append(len(g.j['nodes']) - 1)
         ntri += len(idx) // 3; nvert += len(P)
     data = g.bytes()
-    log(f'{scene_name}: {len(inst_ids)} instances -> {len(buckets)} draw groups, {nvert} verts, {ntri} tris, '
-        f'{len(lms.pages)} lightmap page(s), lit={lit}, {len(data) / 1e6:.1f} MB' + (f', missing {sorted(missing)}' if missing else ''))
-    return data, dict(lit=lit, tris=ntri, verts=nvert, pages=len(lms.pages), material_file=mat_file)
+    npages = sum(len(l.pages) for l in all_lms)
+    log(f'{" + ".join(p[0] for p in parts)}: {n_inst} instances -> {len(buckets)} draw groups, {nvert} verts, {ntri} tris, '
+        f'{npages} lightmap page(s), lit={lit}, {len(data) / 1e6:.1f} MB' + (f', missing {sorted(missing)}' if missing else ''))
+    return data, dict(lit=lit, tris=ntri, verts=nvert, pages=npages, material_file=mat_file0)
 
 
 def main():
@@ -256,29 +288,42 @@ def main():
     ap.add_argument('--packs', default=os.path.join(HERE, '..', 'packs'))
     ap.add_argument('--out', default=os.path.join(HERE, '..', 'viewer', 'scene'))
     ap.add_argument('--tex-max', type=int, default=512)
+    ap.add_argument('--no-events', action='store_true', help='skip the limited-time versions (tools/events.py)')
+    ap.add_argument('--data', default=os.path.join(HERE, '..', 'viewer', 'data'), help='track data written by export_tracks.py')
     a = ap.parse_args()
     store = Store(a.packs)
-    names = sorted(n for n in store.index if n.endswith('.scene_static.sba') and (not a.scenes or any(s in n for s in a.scenes)))
+    remaps = pack_remaps(a.packs)
+    jobs = []                                             # (stem, scene parts, preferred remap tags, lit, region)
+    for n in sorted(store.index):
+        if not n.endswith('.scene_static.sba') or re.search(r'\.(layer|variant)\.', n): continue
+        stem = n[:-len('.scene_static.sba')]
+        if not os.path.exists(os.path.join(a.data, stem + '.js')): continue   # only maps with races (export_tracks.py)
+        m = re.search(r'region_?(\d+)', stem)
+        jobs.append((stem, [n], (), None, int(m.group(1)) if m else None, None))
+    if not a.no_events:
+        for ev in EVENTS:
+            m = re.search(r'region_?(\d+)', ev['base'])
+            jobs.append((ev['key'], [p + '.scene_static.sba' for p in ev['parts']], ev['remap'], ev['lit'], int(m.group(1)), ev))
+    jobs = [j for j in jobs if not a.scenes or any(s in j[0] for s in a.scenes)]
     os.makedirs(a.out, exist_ok=True)
     idx_path = os.path.join(a.out, 'index.js')
     index = {}
     if os.path.exists(idx_path):
         try: index = {e['stem']: e for e in json.loads(open(idx_path).read()[len('NFSNL.setScenes('):-3])}
         except Exception: index = {}
-    for n in names:
-        stem = n[:-len('.scene_static.sba')]
-        m = re.search(r'region_?(\d+)', stem)
-        res = export(store, n, a.tex_max)
+    for stem, parts, prefer, lit, region, ev in jobs:
+        res = export(store, parts, a.tex_max, remaps=remaps, prefer=prefer, lit=lit)
         if res is None:
-            print(f'{n}: no lightmaps file of its own (event overlay), skipped'); continue
+            print(f'{stem}: no static scene with lightmaps, skipped'); continue
         data, meta = res
         with open(os.path.join(a.out, stem + '.js'), 'w') as fh:
             fh.write('NFSNL.addScene(' + json.dumps(stem) + ',"')
             fh.write(base64.b64encode(data).decode('ascii'))
             fh.write('");\n')
-        index[stem] = dict(stem=stem, region=int(m.group(1)) if m else None, mb=round(len(data) / 1e6, 1), **meta)
+        index[stem] = dict(stem=stem, region=region, mb=round(len(data) / 1e6, 1), **meta)
+        if ev: index[stem].update(event=ev['event'], base=ev['base'])
     with open(idx_path, 'w') as fh:
-        fh.write('NFSNL.setScenes(' + json.dumps(sorted(index.values(), key=lambda e: (e['region'] or 99, e['stem'])), indent=1) + ');\n')
+        fh.write('NFSNL.setScenes(' + json.dumps(sorted(index.values(), key=lambda e: (e['region'] or 99, 'event' in e, e['stem'])), indent=1) + ');\n')
     print(f'{len(index)} scenes -> {a.out}')
 
 

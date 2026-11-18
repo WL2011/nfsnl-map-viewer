@@ -3,13 +3,16 @@
 STRU: 6-byte records (name, first_field, field_count).  FIEL: 8-byte records (name, type, offset, ref).
 OHDR: u32[0] = root object index, then (data_offset << 3 | kind) per object; kind 0 = struct (u16 struct index +
 fields), kind 2 = list (u32 element type, u32 count, elements).  References are u32 OHDR indices, 0xffffffff = null.
-Field types seen so far: 5 u32, 9 bool (1 byte), 10 f32, 13 string (u16 index into CHDR/CDAT), 15 object ref, 16 inline struct
-(ref = struct index), 17 list ref, 18 enum (u32), 22 blob (u32 index into BULK/BARG)."""
+Field types seen so far: 5 u32, 9 bool (1 byte), 10 f32, 13 string (u16 index into CHDR/CDAT), 14 u32, 15 object ref,
+16 inline struct (ref = struct index), 17 list ref, 18 enum (u32), 19 flags (u32), 20 string (u16 index), 22 blob
+(u32 index into BULK/BARG), 23 string (u16 index + u16), 24 vec2 (2 f32), 26 vec4 (4 f32).
+List element type: low 16 bits = field type; for 16 (inline struct) the high 16 bits are the struct index."""
 import struct
 import zstandard
 from sbin import chunks
 
-SIZES = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 8, 7: 8, 9: 1, 10: 4, 11: 8, 12: 1, 13: 2, 15: 4, 17: 4, 18: 4, 22: 4}
+SIZES = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 8, 7: 8, 9: 1, 10: 4, 11: 8, 12: 1, 13: 2, 14: 4, 15: 4, 17: 4, 18: 4, 19: 4,
+         20: 2, 22: 4, 23: 4, 24: 8, 26: 16}
 SCALAR = {0: '<b', 1: '<B', 2: '<h', 3: '<H', 4: '<i', 5: '<I', 6: '<q', 7: '<Q', 9: '<?', 10: '<f', 11: '<d', 12: '<B',
           19: '<I'}                                          # 19 = bit flags (u32)
 NULL = 0xffffffff
@@ -30,10 +33,22 @@ class TypedSB:
         self.D = c['DATA'][1]
         oh = c['OHDR'][1]
         OH = struct.unpack('<%dI' % (len(oh) // 4), oh)
-        self.root = OH[0]
-        self.objs = [None] + [(v >> 3, v & 7) for v in OH[1:]]        # 1-based like the references
+        if OH and OH[0] < len(OH):
+            self.root = OH[0]
+            self.objs = [None] + [(v >> 3, v & 7) for v in OH[1:]]    # 1-based like the references
+        else:                                                         # some files carry no root index: every
+            self.root = None                                          # entry is an object (see find_root)
+            self.objs = [None] + [(v >> 3, v & 7) for v in OH]
         self._blobs = None
         self._cache = {}
+
+    def find_root(self, struct_name):
+        """Root object index, or the first object of struct `struct_name` when the file has no root index."""
+        if self.root is not None: return self.root
+        for i in range(1, len(self.objs)):
+            off, kind = self.objs[i]
+            if kind == 0 and self.structs[struct.unpack_from('<H', self.D, off)[0]][0] == struct_name: return i
+        return None
 
     # ---- schema helpers
     def struct_index(self, name):
@@ -60,8 +75,18 @@ class TypedSB:
         D = self.D
         if t in SCALAR:
             return struct.unpack_from(SCALAR[t], D, off)[0]
-        if t == 13:
-            return self.S[struct.unpack_from('<H', D, off)[0]]
+        if t in (13, 20):
+            i = struct.unpack_from('<H', D, off)[0]
+            return self.S[i] if i < len(self.S) else i
+        if t == 23:                                       # u16 string index + u16 (unused here)
+            i = struct.unpack_from('<H', D, off)[0]
+            return self.S[i] if i < len(self.S) else i
+        if t == 14:
+            return struct.unpack_from('<I', D, off)[0]
+        if t == 24:
+            return list(struct.unpack_from('<2f', D, off))
+        if t == 26:
+            return list(struct.unpack_from('<4f', D, off))
         if t == 16:
             return self._struct(ref, off, deep)
         if t == 18:
@@ -70,7 +95,7 @@ class TypedSB:
             return ('blob', struct.unpack_from('<I', D, off)[0])
         if t in (15, 17):
             r = struct.unpack_from('<I', D, off)[0]
-            if r == NULL or r == 0:
+            if r == NULL or r == 0 or r >= len(self.objs):
                 return None
             return self.get(r, deep - 1) if deep > 0 else ('ref', r)
         return ('?', t, D[off:off + 4].hex())
@@ -94,22 +119,53 @@ class TypedSB:
             v = self._struct(si, off + 2, deep)
         elif kind == 2:
             et, n = struct.unpack_from('<II', D, off)
+            if et & 0xffff == 16 and et >> 16 < len(self.structs):
+                si = et >> 16; sz = self.struct_size(si)
+                v = [self._struct(si, off + 8 + sz * k, deep) for k in range(n)]
+                self._cache[key] = v
+                return v
             if off + 8 + n * SIZES.get(et, 1) > len(D):
                 v = ('list', et, n, off + 8)              # element type not understood: leave raw
             elif et in (15, 17):
                 refs = struct.unpack_from('<%dI' % n, D, off + 8)
-                v = [self.get(r, deep - 1) if deep > 0 and r not in (0, NULL) else ('ref', r) for r in refs]
+                v = [self.get(r, deep - 1) if deep > 0 and r not in (0, NULL) and r < len(self.objs) else ('ref', r) for r in refs]
             elif et in SCALAR:
                 sz = SIZES[et]
                 v = [struct.unpack_from(SCALAR[et], D, off + 8 + sz * k)[0] for k in range(n)]
-            elif et == 13:
+            elif et in (13, 20):
                 v = [self.S[x] for x in struct.unpack_from('<%dH' % n, D, off + 8)]
+            elif et == 23:
+                v = [self.S[x] if x < len(self.S) else x for x in struct.unpack_from('<%dI' % n, D, off + 8)[::1] for x in [x & 0xffff]]
             else:
                 v = ('list', et, n, off + 8)
+        elif kind == 1:
+            v = self._dynamic(off, deep)
         else:
             v = ('kind', kind, off)
         self._cache[key] = v
         return v
+
+    def struct_size(self, si):
+        """Byte size of an inline struct (end of its last field)."""
+        end = 0
+        for fn, t, o, r in self.structs[si][1]:
+            end = max(end, o + (self.struct_size(r) if t == 16 else SIZES.get(t, 4)))
+        return (end + 3) & ~3
+
+    def _dynamic(self, off, deep):
+        """kind 1: a struct that carries its own field table (e.g. an asset reference):
+        u16 field count, u16 byte size, then per field u16 name, u16 type, u16 value offset (from the object start),
+        u16 pad, followed by the value; the next field record starts right after the value."""
+        D = self.D
+        n, size = struct.unpack_from('<HH', D, off)
+        out = {'_type': 'dynamic'}; pos = 4
+        for _ in range(n):
+            if pos + 8 > size: break
+            name, t, voff, ref = struct.unpack_from('<4H', D, off + pos)
+            if voff >= size: break
+            out[self.S[name] if name < len(self.S) else name] = self._field(t, off + voff, ref, deep)
+            pos = voff + SIZES.get(t, 4)
+        return out
 
     def raw_struct(self, idx):
         """(struct index, data offset of first field) for a kind-0 object."""

@@ -1,7 +1,7 @@
 """Pull the track / environment packs of NFS No Limits from an Android device or emulator into ../packs.
 
 usage: pull_packs.py [--serial 127.0.0.1:5555] [--dry-run]
-Reads the device's packs/config/manifest.sb, selects packs tagged tracks_region*, remap_*, textures_environments,
+Reads the device's packs/config/manifest.sb, selects packs tagged tracks_region*, remap_*, prefabs (event layer scenes), vfx (particle effects), textures_environments,
 props_textures or models_environments, and pulls <id>.pack plus <id>/ (installed cabinets). Packs that ship inside
 the APK (InstalledFromBundle, no .pack on the device) are extracted from base.apk."""
 import sys, os, re, struct, argparse, subprocess, zipfile, tempfile
@@ -11,7 +11,7 @@ from sbin import chunks
 HERE = os.path.dirname(os.path.abspath(__file__))
 PKG = 'com.ea.game.nfs14_row'
 DEV = f'/sdcard/Android/data/{PKG}/files/packs'
-TAGS = re.compile(r'(^|\s)(tracks_region\S*|remap_\S+|textures_environments|props_textures|models_environments)(\s|$)')
+TAGS = re.compile(r'(^|\s)(tracks_region\S*|remap_\S+|prefabs|vfx|textures_environments|props_textures|models_environments)(\s|$)')
 
 
 def adb(serial, *args, check=True):

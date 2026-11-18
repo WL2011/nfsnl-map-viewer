@@ -2,7 +2,7 @@ NFSNL.setScenes([
  {
   "stem": "final_region01_cornerstone",
   "region": 1,
-  "mb": 15.5,
+  "mb": 15.9,
   "lit": "night",
   "tris": 230387,
   "verts": 446781,
@@ -12,7 +12,7 @@ NFSNL.setScenes([
  {
   "stem": "final_region02_hopebridge",
   "region": 2,
-  "mb": 12.5,
+  "mb": 12.9,
   "lit": "twilight",
   "tris": 168642,
   "verts": 301112,
@@ -20,9 +20,45 @@ NFSNL.setScenes([
   "material_file": "final_region02_hopebridge.lit_scene_twilight.scene_static.lightmaps.sba"
  },
  {
+  "stem": "christmas_2022_region02_hopebridge",
+  "region": 2,
+  "mb": 16.0,
+  "lit": "twilight",
+  "tris": 213812,
+  "verts": 363783,
+  "pages": 6,
+  "material_file": "Christmas_2022.variant.layerscene_christmas2022_twilight.scene_static.lightmaps.sba",
+  "event": "Christmas 2022",
+  "base": "final_region02_hopebridge"
+ },
+ {
+  "stem": "halloween_2024_region02_hopebridge",
+  "region": 2,
+  "mb": 18.9,
+  "lit": "night",
+  "tris": 259199,
+  "verts": 468489,
+  "pages": 6,
+  "material_file": "Halloween_2024.variant.layerscene_halloween_hopebridge2024_night.scene_static.lightmaps.sba",
+  "event": "Halloween 2024",
+  "base": "final_region02_hopebridge"
+ },
+ {
+  "stem": "winter_2024_region02_hopebridge",
+  "region": 2,
+  "mb": 15.4,
+  "lit": "night",
+  "tris": 200158,
+  "verts": 337660,
+  "pages": 6,
+  "material_file": "Winter_2024.variant.layerscene_winter2024_night.scene_static.lightmaps.sba",
+  "event": "Winter 2024",
+  "base": "final_region02_hopebridge"
+ },
+ {
   "stem": "final_region03_thesquare",
   "region": 3,
-  "mb": 12.0,
+  "mb": 12.4,
   "lit": "night",
   "tris": 158109,
   "verts": 296609,
@@ -32,7 +68,7 @@ NFSNL.setScenes([
  {
   "stem": "final_region04_eastside",
   "region": 4,
-  "mb": 27.9,
+  "mb": 27.5,
   "lit": "day",
   "tris": 469335,
   "verts": 821064,
@@ -62,12 +98,24 @@ NFSNL.setScenes([
  {
   "stem": "final_region08_mountain",
   "region": 8,
-  "mb": 15.9,
+  "mb": 15.8,
   "lit": "day",
   "tris": 283718,
   "verts": 425344,
   "pages": 2,
   "material_file": "final_region08_mountain.lit_scene_day.scene_static.lightmaps.sba"
+ },
+ {
+  "stem": "halloween_2023_region08_mountain",
+  "region": 8,
+  "mb": 20.1,
+  "lit": "bloodmoon",
+  "tris": 386704,
+  "verts": 540606,
+  "pages": 3,
+  "material_file": "halloween_2023.variant.layerscene_halloween2023_bloodmoon.scene_static.lightmaps.sba",
+  "event": "Halloween 2023",
+  "base": "final_region08_mountain"
  },
  {
   "stem": "region09_desert",
@@ -80,6 +128,18 @@ NFSNL.setScenes([
   "material_file": "region09_desert.lit_scene_day.scene_static.lightmaps.sba"
  },
  {
+  "stem": "halloween_2022_region09_desert",
+  "region": 9,
+  "mb": 31.1,
+  "lit": "night",
+  "tris": 618023,
+  "verts": 856748,
+  "pages": 3,
+  "material_file": "Halloween_2022.variant.layerscene_halloween2022_night.scene_static.lightmaps.sba",
+  "event": "Halloween 2022",
+  "base": "region09_desert"
+ },
+ {
   "stem": "region10_rural",
   "region": 10,
   "mb": 12.1,
@@ -90,9 +150,21 @@ NFSNL.setScenes([
   "material_file": "region10_rural.lit_scene_dawn.scene_static.lightmaps.sba"
  },
  {
+  "stem": "christmas_2023_region10_rural",
+  "region": 10,
+  "mb": 15.6,
+  "lit": "night",
+  "tris": 232803,
+  "verts": 366517,
+  "pages": 5,
+  "material_file": "christmas_2023.variant.layerscene_christmas2023_night.scene_static.lightmaps.sba",
+  "event": "Christmas 2023",
+  "base": "region10_rural"
+ },
+ {
   "stem": "region11_airport",
   "region": 11,
-  "mb": 9.3,
+  "mb": 9.2,
   "lit": "day",
   "tris": 136370,
   "verts": 206812,
@@ -108,15 +180,5 @@ NFSNL.setScenes([
   "verts": 105945,
   "pages": 1,
   "material_file": "region12_speedway.lit_scene_day.scene_static.lightmaps.sba"
- },
- {
-  "stem": "studio_vehicles_ingame_preview",
-  "region": null,
-  "mb": 0.1,
-  "lit": "day",
-  "tris": 2654,
-  "verts": 4887,
-  "pages": 1,
-  "material_file": "studio_vehicles_ingame_preview.lit_scene.scene_static.lightmaps.sba"
  }
 ]);

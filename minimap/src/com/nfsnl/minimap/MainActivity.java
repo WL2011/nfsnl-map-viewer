@@ -4,43 +4,30 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
-import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
-import android.widget.Spinner;
 import android.widget.TextView;
 
-import java.util.ArrayList;
-import java.util.List;
-
-/** Pick the race, tune the minimap, start/stop the overlay. */
+/** Tune the minimap and start/stop the overlay. Needs root: map, race, car and opponent come from game memory. */
 public final class MainActivity extends Activity {
-    private static final int REQ_CAPTURE = 7;
-    private TrackData data;
     private Settings s;
-    private Spinner mapSp, trackSp, raceSp;
-    private View trackRow;
     private Button startBtn;
     private TextView status;
     private float dp;
-    private boolean filling;
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         dp = getResources().getDisplayMetrics().density;
-        data = TrackData.get(this);
         s = Settings.load(this);
 
         LinearLayout col = new LinearLayout(this);
@@ -51,20 +38,9 @@ public final class MainActivity extends Activity {
         TextView title = text("NFSNL Minimap", 24, Color.WHITE);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         col.addView(title);
-        TextView sub = text("在游戏左下角悬浮显示小地图，实时跟随车辆，自动识别地图和比赛（需要 root）。没有 root 时改为读取屏幕上的 PROGRESS，需要在下面手动选比赛。", 13, 0xFF9AA1AD);
+        TextView sub = text("在游戏左下角悬浮显示小地图：读取游戏内存，实时跟随车辆，自动识别地图和比赛，红色箭头是对手。需要 root。", 13, 0xFF9AA1AD);
         sub.setPadding(0, px(4), 0, px(16));
         col.addView(sub);
-
-        mapSp = new Spinner(this);
-        trackSp = new Spinner(this);
-        raceSp = new Spinner(this);
-        TextView manual = text("手动选择（仅读屏模式使用）", 13, 0xFF9AA1AD);
-        manual.setPadding(0, 0, 0, px(4));
-        col.addView(manual);
-        col.addView(row("地图", mapSp));
-        trackRow = row("路线", trackSp);
-        col.addView(trackRow);
-        col.addView(row("比赛", raceSp));
 
         col.addView(slider("大小", 140, 400, s.sizeDp, "dp", v -> s.sizeDp = v));
         col.addView(slider("不透明度", 30, 100, s.alphaPct, "%", v -> s.alphaPct = v));
@@ -103,8 +79,8 @@ public final class MainActivity extends Activity {
         status.setPadding(0, px(14), 0, 0);
         col.addView(status);
 
-        TextView help = text("用法：启动 → 允许“显示在其他应用上层”（和 root 授权）→ 回到游戏开赛，地图和比赛会自动识别。\n"
-                + "· 轻点小地图：切换跟随 / 全图\n· 拖动：移动位置\n· 长按：回到这里换比赛", 13, 0xFF9AA1AD);
+        TextView help = text("用法：启动 → 允许“显示在其他应用上层”和 root 授权 → 回到游戏开赛，地图和比赛会自动识别。\n"
+                + "· 轻点小地图：切换跟随 / 全图\n· 拖动：移动位置\n· 长按：回到这里调整设置", 13, 0xFF9AA1AD);
         help.setPadding(0, px(14), 0, 0);
         col.addView(help);
 
@@ -113,7 +89,6 @@ public final class MainActivity extends Activity {
         sv.addView(col);
         setContentView(sv);
 
-        fillMaps();
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 1);
     }
 
@@ -144,13 +119,11 @@ public final class MainActivity extends Activity {
                 startBtn.setEnabled(true);
                 if (root) {
                     s.save(this);
-                    startForegroundService(new Intent(this, MinimapService.class).setAction(MinimapService.ACTION_START_ROOT));
+                    startForegroundService(new Intent(this, MinimapService.class).setAction(MinimapService.ACTION_START));
                     status.setText("root 可用：读取游戏内存，自动识别地图和比赛。");
                     startBtn.postDelayed(this::refresh, 300);
                 } else {
-                    status.setText("没有 root：改用读屏模式，请允许录制屏幕，并手动选好比赛。");
-                    MediaProjectionManager mpm = getSystemService(MediaProjectionManager.class);
-                    startActivityForResult(mpm.createScreenCaptureIntent(), REQ_CAPTURE);
+                    status.setText("没有获得 root 权限，小地图无法使用。请在设备或模拟器的设置里开启 root，并在弹出的授权窗口里允许本应用。");
                 }
             });
         }).start();
@@ -172,90 +145,13 @@ public final class MainActivity extends Activity {
         }
     }
 
-    @Override
-    protected void onActivityResult(int req, int code, Intent data) {
-        super.onActivityResult(req, code, data);
-        if (req != REQ_CAPTURE) return;
-        if (code != RESULT_OK || data == null) { status.setText("没有获得录屏授权，小地图无法跟随车辆。"); return; }
-        s.save(this);
-        startForegroundService(new Intent(this, MinimapService.class).setAction(MinimapService.ACTION_START)
-                .putExtra(MinimapService.EXTRA_CODE, code).putExtra(MinimapService.EXTRA_DATA, data));
-        startBtn.postDelayed(this::refresh, 300);
-    }
-
-    // ------------------------------------------------------------------ selection
-    private void fillMaps() {
-        filling = true;
-        List<String> names = new ArrayList<>();
-        for (TrackData.MapInfo m : data.maps) names.add(m.title());
-        mapSp.setAdapter(adapter(names));
-        mapSp.setSelection(clamp(s.map, names.size()));
-        mapSp.setOnItemSelectedListener(listener(i -> {
-            if (i != s.map) { s.map = i; s.track = 0; s.race = 0; }
-            fillTracks();
-        }));
-        fillTracks();
-    }
-
-    private void fillTracks() {
-        filling = true;
-        TrackData.MapInfo m = data.maps.get(clamp(s.map, data.maps.size()));
-        List<String> names = new ArrayList<>();
-        for (TrackData.Track t : m.tracks) names.add(t.name + String.format("  ·  %.1f km", t.len / 1000f));
-        trackSp.setAdapter(adapter(names));
-        trackSp.setSelection(clamp(s.track, names.size()));
-        trackRow.setVisibility(names.size() > 1 ? View.VISIBLE : View.GONE);
-        trackSp.setOnItemSelectedListener(listener(i -> {
-            if (i != s.track) { s.track = i; s.race = 0; }
-            fillRaces();
-        }));
-        fillRaces();
-    }
-
-    private void fillRaces() {
-        filling = true;
-        TrackData.Track t = s.trackOf(data);
-        List<String> names = new ArrayList<>();
-        if (t != null) for (TrackData.Race r : t.races) names.add(r.title() + "  ·  " + r.subtitle());
-        raceSp.setAdapter(adapter(names));
-        raceSp.setSelection(clamp(s.race, names.size()));
-        raceSp.setOnItemSelectedListener(listener(i -> { s.race = i; changed(); }));
-        filling = false;
-        changed();
-    }
-
     private void changed() {
-        if (filling) return;
         s.save(this);
         MinimapService.update(this);
     }
 
     // ------------------------------------------------------------------ widgets
     private interface IntCb { void on(int v); }
-
-    private AdapterView.OnItemSelectedListener listener(IntCb cb) {
-        return new AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(AdapterView<?> p, View v, int i, long id) { cb.on(i); }
-            @Override public void onNothingSelected(AdapterView<?> p) {}
-        };
-    }
-
-    private ArrayAdapter<String> adapter(List<String> items) {
-        ArrayAdapter<String> a = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, items);
-        a.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        return a;
-    }
-
-    private View row(String label, View v) {
-        LinearLayout r = new LinearLayout(this);
-        r.setOrientation(LinearLayout.HORIZONTAL);
-        r.setGravity(Gravity.CENTER_VERTICAL);
-        r.setPadding(0, px(4), 0, px(4));
-        TextView t = text(label, 15, 0xFFE8EAEE);
-        r.addView(t, new LinearLayout.LayoutParams(px(84), ViewGroup.LayoutParams.WRAP_CONTENT));
-        r.addView(v, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        return r;
-    }
 
     private View slider(String label, int min, int max, int value, String unit, IntCb cb) {
         LinearLayout r = new LinearLayout(this);
@@ -287,6 +183,4 @@ public final class MainActivity extends Activity {
     }
 
     private int px(float v) { return Math.round(v * dp); }
-
-    private static int clamp(int i, int n) { return Math.max(0, Math.min(i, n - 1)); }
 }

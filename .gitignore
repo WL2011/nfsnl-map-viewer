@@ -1,0 +1,6 @@
+minimap/
+packs/
+glb/
+.DS_Store
+__pycache__/
+.claude/

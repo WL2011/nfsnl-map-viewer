@@ -15,6 +15,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from export_map import Store
 from sbtyped import TypedSB
+from events import EVENTS
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLACES = {'cornerstone': 'Cornerstone', 'hopebridge': 'Hopebridge', 'thesquare': 'The Square', 'eastside': 'Eastside',
@@ -177,7 +178,8 @@ def main():
     ap.add_argument('scenes', nargs='*')
     ap.add_argument('--packs', default=os.path.join(HERE, '..', 'packs'))
     ap.add_argument('--out', default=os.path.join(HERE, '..', 'viewer', 'data'))
-    ap.add_argument('--with-events', action='store_true', help='also export event variants (Lunar, Shadowfall, ...)')
+    ap.add_argument('--with-events', action='store_true', help='also export the old event scene.sb variants (Lunar, Shadowfall, ...)')
+    ap.add_argument('--no-limited', action='store_true', help='leave the limited-time versions (tools/events.py) out of the index')
     a = ap.parse_args()
     store = Store(a.packs)
     names = sorted(n for n in store.index if n.endswith('.scene.sb') and (not a.scenes or any(s in n for s in a.scenes)))
@@ -207,7 +209,15 @@ def main():
                                                                  races=len(t['races']), **t['stats']) for t in tracks],
                           ymin=round(min(all_y), 1), ymax=round(max(all_y), 1), kb=round(len(body) / 1024)))
         print(f'{n}: {len(tracks)} track(s), {sum(len(t["races"]) for t in tracks)} races, {len(body) / 1024:.0f} KB')
-    index.sort(key=lambda m: (m['region'] if m['region'] is not None else 99, m['event'] != '', m['event'], m['key']))
+    # limited-time versions (tools/events.py): same races as the base map, own scene; data/<base>.js is reused
+    if not a.no_limited:
+        for ev in EVENTS:
+            b = next((m for m in index if m['key'] == ev['base']), None)
+            if b is None: continue
+            index.append(dict(b, key=ev['key'], event=ev['zh'], event_en=ev['event'], base=ev['base'], limited=True))
+            print(f"{ev['key']}: limited version of {ev['base']}")
+    index.sort(key=lambda m: (m.get('limited', False), m['region'] if m['region'] is not None else 99, m['event'] != '',
+                              re.sub(r'^(.*?)\s*(\d{4})$', r'\2 \1', m.get('event_en') or m['event']), m['key']))
     with open(os.path.join(a.out, 'index.js'), 'w') as fh:
         fh.write('NFSNL.setIndex(' + json.dumps(index, ensure_ascii=False, indent=1) + ');\n')
     print(f'{len(index)} maps -> {a.out}')
